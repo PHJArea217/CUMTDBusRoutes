@@ -1,0 +1,14 @@
+image: openjdk:11
+
+pages:
+  stage: deploy
+  script:
+  - wget https://developer.cumtd.com/gtfs/google_transit.zip
+  - unzip google_transit.zip routes.txt stops.txt stop_times.txt trips.txt
+  - javac BusRoutes.java && java BusRoutes
+  - cat header.html index-dynamic.html footer.html > public/index.html
+  artifacts:
+    paths:
+    - public
+  only:
+  - master

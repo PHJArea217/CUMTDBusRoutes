@@ -1,0 +1,17 @@
+agency.txt
+calendar.txt
+calendar_dates.txt
+fare_attributes.txt
+fare_rules.txt
+feed_info.txt
+frequencies.txt
+routes.txt
+shapes.txt
+stop_times.txt
+stops.txt
+transfers.txt
+trips.txt
+*.class
+*.zip
+public/
+index-dynamic.html
