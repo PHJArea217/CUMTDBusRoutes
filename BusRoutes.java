@@ -13,6 +13,7 @@ import java.util.function.Predicate;
 import java.time.Instant;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class BusRoutes {
     public static String quote(String s) {
@@ -76,8 +77,8 @@ public class BusRoutes {
 			return (!i.hasNext() && !j.hasNext()) ? initialDifference : -1;
 		}
 		public String jsonStringifyStops() {
-			return "{" + String.join(",", stopTimes.stream().map(StopTime::jsonStringify)
-					.collect(Collectors.toCollection(LinkedList::new))) + "}";
+			return "[" + String.join(",", stopTimes.stream().map(StopTime::jsonStringify)
+					.collect(Collectors.toCollection(LinkedList::new))) + "]";
 		}
 		public String getId() {
 			return data.getOrDefault("trip_id", "");
@@ -174,6 +175,7 @@ public class BusRoutes {
         }
 	}
 	public static class Stop extends GenericData {
+		public final Set<Route> servicedRoutes = new HashSet<>();
 		@Override
 		public String toString() {
 			String g = data.get("stop_name");
@@ -185,20 +187,19 @@ public class BusRoutes {
 		public String jsonStringifyMetadata() {
 			StringBuilder sb = new StringBuilder("\"");
 			sb.append(quote(data.getOrDefault("stop_id", "")));
-			sb.append("\":{");
-			boolean isFirst = true;
+			sb.append("\":{\"r\":");
+			sb.append(Arrays.toString(servicedRoutes.stream().mapToInt(Route::getNumber).toArray()).replaceAll(" ",""));
 			String[][] attr = new String[][] {{"stop_code", "c"}, {"stop_name", "n"}, {"stop_desc", "d"},
 					{"stop_url", "u"}, {"zone_id", "z"}, {"stop_lat", "y"}, {"stop_lon", "x"}};
 			for (String[] a : attr) {
 				String v = data.get(a[0]);
 				if (v != null && !v.isEmpty()) {
-					if (!isFirst) sb.append(',');
+					sb.append(',');
 					if (a[1].matches("[xy]")) {
 						sb.append(String.format("\"%s\":%.7f", a[1], Double.parseDouble(v)));
 					} else {
 						sb.append(String.format("\"%s\":\"%s\"", a[1], quote(v)));
 					}
-					isFirst = false;
 				}
 			}
 			sb.append('}');
@@ -278,9 +279,11 @@ public class BusRoutes {
 		public String jsonStringify() {
 		    String sName = quote(stopId.data.getOrDefault("stop_id", ""));
 		    if (arrivalTime != departureTime) {
-                return String.format("\"%s\":[%d,%d]", sName, arrivalTime, departureTime);
+                return String.format("{\"n\":\"%s\",\"a\":%d,\"d\":%d}",
+                		sName, arrivalTime, departureTime);
             } else {
-		        return String.format("\"%s\":[%d]", sName, arrivalTime);
+		        return String.format("{\"n\":\"%s\",\"a\":%d}",
+		        		sName, arrivalTime);
             }
         }
 	}
@@ -368,8 +371,17 @@ public class BusRoutes {
 	}
 	public static class Route extends GenericData implements Comparable<Route> {
 		public long sortOrder = -1;
+		private int number = 0;
+		private static final AtomicInteger numberCounter = new AtomicInteger();
 		public HashMap<String, Trip> trips = new HashMap<>();
 		public Set<UniqueTripSet> uniqueTrips = new HashSet<>();
+		public Route() {
+			super();
+			number = numberCounter.getAndIncrement();
+		}
+		public int getNumber() {
+			return number;
+		}
 		@Override
 		public int compareTo(Route other) {
 			if (other.sortOrder > sortOrder) {
@@ -404,6 +416,22 @@ public class BusRoutes {
 			if (l == null) return s;
 			return s + ": " + l;
 		}
+		public String jsonStringify() {
+			StringBuilder sb = new StringBuilder("{\"i\":\"");
+			sb.append(quote(getPrimaryValue()));
+			sb.append(String.format("\",\"_\":\"routes/%s.json\"",
+				getHtmlFileName(getPrimaryValue())));
+			String[][] attr = new String[][] {{"route_short_name", "s"},
+				{"route_long_name", "l"}, {"route_desc", "d"},
+				{"route_type", "t"}, {"route_color", "b"},
+				{"route_text_color", "f"}};
+			for (String[] a : attr) {
+				Optional.ofNullable(data.get(a[0])).ifPresent(v ->
+					sb.append(String.format(",\"%s\":\"%s\"", a[1], quote(v))));
+			}
+			sb.append('}');
+			return sb.toString();
+		}
 	}
 	public static String getHtmlFileName(String fileName) {
 		return String.format("%s_%08x", fileName.toLowerCase()
@@ -428,6 +456,7 @@ public class BusRoutes {
 			String[] values = input.nextLine().split(",");
 			T result = creator.get();
 			for (int i = 0; i < Math.min(keys.length, values.length); i++) {
+				if (values[i].isEmpty()) continue;
 				result.data.put(keys[i].intern(), values[i].intern());
 			}
 			String keyV = result.data.get(key);
@@ -557,9 +586,11 @@ public class BusRoutes {
 			routeData.print(sanitizeHtml(r.getFullName(), false));
 			routeData.print("</h1>");
 			for (UniqueTripSet s : r.uniqueTrips) {
-				routeData.print(String.format("<h2>%s</h2>", sanitizeHtml(s.data.get("trip_headsign"), true)));
+				routeData.print(String.format("<h2>%s</h2>", sanitizeHtml(s.data.getOrDefault("trip_headsign", ""), true)));
 				routeData.print("<table border=1>");
 				for (StopTime st : s.stopList) {
+					/* Indicate in the Stop object that it is part of this route (r) */
+					st.stopId.servicedRoutes.add(r);
 					routeData.print("<tr><td style=\"white-space: nowrap;\">");
 					routeData.print(sanitizeHtml(st.stopId.data.get("stop_name"), true));
 					routeData.print("</td>");
@@ -605,16 +636,35 @@ public class BusRoutes {
 			System.out.println("json done.");
 		}
 		/* STEP 3: stops database */
+		System.out.print("Generating stops.json... ");
 		PrintStream stopDB = openTextOrDie("public/meta/stops.json");
 		stopDB.print("{");
-		stopDB.print(stops.values().parallelStream().map(Stop::jsonStringifyMetadata).collect(Collectors.joining(",")));
+		stopDB.print(stops.values().parallelStream().map(Stop::jsonStringifyMetadata)
+				.sorted(Comparator.naturalOrder()).collect(Collectors.joining(",\n")));
 		stopDB.print("}");
 		stopDB.close();
+		System.out.print("done.\nGenerating service.json... ");
 		PrintStream serviceDB = openTextOrDie("public/meta/service.json");
 		serviceDB.print("{");
-		serviceDB.print(g.values().parallelStream().map(ServiceGroup::jsonStringify).collect(Collectors.joining(",")));
+		serviceDB.print(g.values().parallelStream().map(ServiceGroup::jsonStringify).collect(Collectors.joining(",\n")));
 		serviceDB.print("}");
 		serviceDB.close();
+		System.out.print("done.\nGenerating routes.json... ");
+		/* STEP 4: routes database */
+		PrintStream routeDB = openTextOrDie("public/meta/routes.json");
+		routeDB.print("[");
+		Arrays.sort(routeArray, Comparator.comparingInt(Route::getNumber));
+		for (int i = 0; i < routeArray.length; i++) {
+			if (routeArray[i].getNumber() != i) {
+				System.out.println("error!");
+				throw new RuntimeException();
+			}
+			routeDB.print(routeArray[i].jsonStringify());
+			routeDB.print(',');
+		}
+		routeDB.print("{}]");
+		routeDB.close();
+		System.out.println("done.");
 	}
 
 	private static void parseCalendar(Map<String,ServiceGroup> g, Scanner calendarDateScanner) {

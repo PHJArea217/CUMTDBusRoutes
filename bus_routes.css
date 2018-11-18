@@ -1,0 +1,50 @@
+#title {
+	font-weight: bold;
+	font-size: 48px;
+}
+#all {
+	text-align: center;
+	margin-left: auto;
+	margin-right: auto;
+}
+#trip-count, #no-routes {
+	padding-top: 6px;
+	padding-bottom: 6px;
+}
+#route_title {
+	padding-top: 6px;
+	padding-bottom: 8px;
+}
+#route-selector-wrapper {
+	padding-bottom: 8px;
+}
+.stop-name {
+	color: #000;
+	text-decoration: none;
+}
+#stop-list-plain {
+	margin-left: auto;
+	margin-right: auto;
+	text-align: left;
+	width: 600px;
+}
+#stop-table {
+	margin-left: auto;
+	margin-right: auto;
+	text-align: left;
+}
+#stop-name-large {
+	font-size: 24px;
+	font-weight: bold;
+}
+#route_tables {
+	vertical-align: top;
+}
+body {
+	background-color: #f8fff8;
+}
+.trip-table {
+	vertical-align: top;
+	margin: 6px;
+	display: inline-block;
+}

@@ -6,7 +6,8 @@ pages:
   - wget https://developer.cumtd.com/gtfs/google_transit.zip
   - unzip google_transit.zip routes.txt stops.txt stop_times.txt trips.txt calendar_dates.txt calendar.txt
   - javac BusRoutes.java && java BusRoutes
-  - cat header.html index-dynamic.html footer.html > public/index.html
+  - cat header.html index-dynamic.html footer.html > public/about.html
+  - cp bus_routes.css bus_routes.js public/ && cp bus_routes.html public/index.html
   artifacts:
     paths:
     - public
