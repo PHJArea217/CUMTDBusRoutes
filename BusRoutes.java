@@ -16,9 +16,36 @@ import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class BusRoutes {
-    public static String quote(String s) {
-        return s.replace("\"", "\\\"");
-    }
+	public static String quote(String s) {
+		return s.replace("\"", "\\\"");
+	}
+	public static String[] splitCSV(String s0) {
+		LinkedList<String> s = new LinkedList<>();
+		StringBuilder sb = new StringBuilder();
+		boolean inQuote = false;
+		boolean lastQuote = false;
+		for (char c : s0.toCharArray()) {
+			if (c == '\uFEFF') continue;
+			if (c == ',' && inQuote == false) {
+				lastQuote = false;
+				s.add(sb.toString());
+				sb = new StringBuilder();
+			} else if (c == '"') {
+				if (lastQuote == true) {
+					sb.append('"');
+					lastQuote = false;
+				} else {
+					lastQuote = true;
+				}
+				inQuote = !inQuote;
+			} else {
+				sb.append(c);
+				lastQuote = false;
+			}
+		}
+		s.add(sb.toString());
+		return s.toArray(new String[0]);
+	}
 	public static abstract class GenericData {
 		public Map<String, String> data = new HashMap<>();
 		public String primaryKey;
@@ -41,6 +68,23 @@ public class BusRoutes {
 	}
 	public static class Trip extends GenericData {
 		public TreeSet<StopTime> stopTimes = new TreeSet<>();
+		public Route routeId = null;
+		private Map<String, Route> routeLookupTable = null;
+		public int indexInJsonArray = -1;
+		public Trip() {
+				this(null);
+		}
+		public Trip(Map<String, Route> lookupTable) {
+				super();
+				routeLookupTable = lookupTable;
+		}
+		@Override
+		public void complete() {
+				if (routeLookupTable != null) {
+					routeId = routeLookupTable.get(data.getOrDefault("route_id", ""));
+				}
+				routeLookupTable = null;
+		}
 		public void orderStopTimes() {
 			long order = 0;
 			for (StopTime t : stopTimes) {
@@ -48,17 +92,17 @@ public class BusRoutes {
 			}
 		}
 		public String getHeading() {
-		    return data.getOrDefault("trip_headsign", "");
-        }
+			return data.getOrDefault("trip_headsign", "");
+		}
 		/* Return time difference between similar trips, or -1 if dissimilar */
 		public static int compress(Trip a, Trip b) {
-		    if (a == null || b == null) {
-		        return -1;
-            }
+			if (a == null || b == null) {
+				return -1;
+			}
 			if (a.stopTimes.size() == 0 || b.stopTimes.size() == 0) {
 				return -1;
 			}
-			if (!a.data.get("trip_headsign").equals(b.data.get("trip_headsign"))) {
+			if (!a.getHeading().equals(b.getHeading())) {
 				return -1;
 			}
 			int initialDifference = b.stopTimes.first().arrivalTime
@@ -100,10 +144,11 @@ public class BusRoutes {
 		public final Map<String, HashSet<StopTime>> stopTimesAtEachStop;
 		public int count = 0;
 		public static int compareTripsByArrival(Trip a, Trip b) {
-			StopTime aS = a.stopTimes.first();
-			StopTime bS = b.stopTimes.first();
-			return Comparator.nullsFirst(Comparator.comparingInt((StopTime s)
+			StopTime aS = a.stopTimes.isEmpty() ? null : a.stopTimes.first();
+			StopTime bS = b.stopTimes.isEmpty() ? null : b.stopTimes.first();
+			int r = Comparator.nullsFirst(Comparator.comparingInt((StopTime s)
 				-> (int) s.arrivalTime)).compare(aS, bS);
+			return r == 0 ? Comparator.comparing(Trip::getPrimaryValue).compare(a, b) : r;
 		}
 		public UniqueTripSet(Trip t) {
 			data = Collections.unmodifiableMap(t.data);
@@ -148,34 +193,40 @@ public class BusRoutes {
 			return sb.toString();
 		}
 		public Stream<String> jsonStringStream() {
-		    LinkedList<String> result = new LinkedList<>();
-		    Trip last = null;
-		    StringBuilder tempStr = new StringBuilder();
-		    Function<Trip, String> initNewTrip = (Trip t) -> String.format("{\"h\":\"%s\",\"s\":%s,\"d\":{\"%s\":%s",
-                        quote(t.getHeading()), t.jsonStringifyStops(), quote(t.getId()), t.jsonStringifyMetadata(0));
-		    for (Trip t : trips) {
-		        int diff = Trip.compress(last, t);
-		        if (diff == -1) {
-		            /* Our trip is different from the last one */
-                    if (last != null) {
-                        tempStr.append("}}");
-                    }
-                    result.add(tempStr.toString());
-                    tempStr = new StringBuilder(initNewTrip.apply(t));
-		            last = t;
-                } else {
-		            tempStr.append(String.format(",\"%s\":%s", quote(t.getId()), t.jsonStringifyMetadata(diff)));
-                }
-            }
-            if (last != null) {
-                tempStr.append("}}");
-            }
-            result.add(tempStr.toString());
-            return result.stream();
-        }
+			LinkedList<String> result = new LinkedList<>();
+			Trip last = null;
+			StringBuilder tempStr = new StringBuilder();
+			Function<Trip, String> initNewTrip = (Trip t) -> {
+						if (t.routeId != null) t.indexInJsonArray = t.routeId.incrementJsonArrayCounter();
+						return String.format("{\"h\":\"%s\",\"s\":%s,\"x\":%s,\"d\":{\"%s\":%s",
+						quote(t.getHeading()), t.jsonStringifyStops(),
+						"1".equals(t.data.get("direction_id")) ? "true" : "false",
+						quote(t.getId()), t.jsonStringifyMetadata(0));
+			};
+			for (Trip t : trips) {
+				int diff = Trip.compress(last, t);
+				if (diff == -1) {
+					/* Our trip is different from the last one */
+					if (last != null) {
+						tempStr.append("}}");
+					}
+					result.add(tempStr.toString());
+					tempStr = new StringBuilder(initNewTrip.apply(t));
+					last = t;
+				} else {
+					t.indexInJsonArray = last.indexInJsonArray;
+					tempStr.append(String.format(",\"%s\":%s", quote(t.getId()), t.jsonStringifyMetadata(diff)));
+				}
+			}
+			if (last != null) {
+				tempStr.append("}}");
+			}
+			result.add(tempStr.toString());
+			return result.stream();
+		}
 	}
 	public static class Stop extends GenericData {
-		public final Set<Route> servicedRoutes = new HashSet<>();
+		public final SortedSet<Route> servicedRoutes = new TreeSet<>();
 		@Override
 		public String toString() {
 			String g = data.get("stop_name");
@@ -220,15 +271,18 @@ public class BusRoutes {
 		public StopTime() {}
 		public static short parseTime(String time) {
 			String[] timeParts = time.split(":");
-			int hours = Integer.parseInt(timeParts[0], 10);
-			int minutes = Integer.parseInt(timeParts[1], 10);
-			int seconds = Integer.parseInt(timeParts[2], 10);
-			int n = (hours * 1800 + minutes * 30 + seconds / 2) - 32768;
-			if (n < -32768 || n > 32766) {
-				/* invalid time */
+			try {
+				int hours = Integer.parseInt(timeParts[0], 10);
+				int minutes = Integer.parseInt(timeParts[1], 10);
+				int seconds = Integer.parseInt(timeParts[2], 10);
+				int n = (hours * 1800 + minutes * 30 + seconds / 2) - 32768;
+				if (n < -32768 || n > 32766)
+					/* invalid time */
+					return INVALID_TIME;
+				return (short) n;
+			} catch (Exception e) {
 				return INVALID_TIME;
 			}
-			return (short) n;
 		}
 		public static String expandTime(short time) {
 			if (time == INVALID_TIME) return "";
@@ -258,15 +312,17 @@ public class BusRoutes {
 						tripId = trips.get(data[i]);
 						break;
 					case "stop_sequence":
-						stopSequence = Long.parseLong(data[i]);
+						stopSequence = Long.parseLong(data[i].trim());
 						break;
 				}
 			}
-			tripId.stopTimes.add(this);
+			if (tripId != null)
+				tripId.stopTimes.add(this);
 		}
 		@Override
 		public int compareTo(StopTime other) {
-			return Long.compare(this.stopSequence, other.stopSequence);
+			int r = Long.compare(this.stopSequence, other.stopSequence);
+			return r == 0 ? Comparator.comparing(Object::hashCode).compare(this, other) : r;
 		}
 		@Override
 		public String toString() {
@@ -277,68 +333,68 @@ public class BusRoutes {
 			return String.format("%d %s", stopOrder, stopId.toString());
 		}
 		public String jsonStringify() {
-		    String sName = quote(stopId.data.getOrDefault("stop_id", ""));
-		    if (arrivalTime != departureTime) {
-                return String.format("{\"n\":\"%s\",\"a\":%d,\"d\":%d}",
-                		sName, arrivalTime, departureTime);
-            } else {
-		        return String.format("{\"n\":\"%s\",\"a\":%d}",
-		        		sName, arrivalTime);
-            }
-        }
-	}
-	public static class ServiceGroup extends GenericData {
-    	public Set<DayOfWeek> available = null;
-    	public LocalDate startDate, endDate;
-    	public String serviceId;
-    	public final Map<LocalDate, String> exceptions = new TreeMap<>();
-    	public static LocalDate parseDate(String d) {
-    		SimpleDateFormat s = new SimpleDateFormat("yyyyMMdd");
-    		try {
-				return LocalDate.ofEpochDay(s.parse(d).toInstant().toEpochMilli() / 86400000);
-			} catch (Exception e) {
-    			return LocalDate.of(1970, 1, 1);
+			String sName = quote(stopId.data.getOrDefault("stop_id", ""));
+			if (arrivalTime != departureTime) {
+				return String.format("{\"n\":\"%s\",\"a\":%d,\"d\":%d}",
+						sName, arrivalTime, departureTime);
+			} else {
+				return String.format("{\"n\":\"%s\",\"a\":%d}",
+						sName, arrivalTime);
 			}
 		}
-    	@Override
-		public void complete() {
-    		available = EnumSet.noneOf(DayOfWeek.class);
-    		for (DayOfWeek e : DayOfWeek.values()) {
-    			String s = data.getOrDefault(e.toString().toLowerCase(), "0");
-    			if (s.equals("1")) available.add(e);
+	}
+	public static class ServiceGroup extends GenericData {
+		public Set<DayOfWeek> available = null;
+		public LocalDate startDate, endDate;
+		public String serviceId;
+		public final Map<LocalDate, String> exceptions = new TreeMap<>();
+		public static LocalDate parseDate(String d) {
+			SimpleDateFormat s = new SimpleDateFormat("yyyyMMdd");
+			try {
+				return LocalDate.ofEpochDay(s.parse(d).toInstant().toEpochMilli() / 86400000);
+			} catch (Exception e) {
+				return LocalDate.of(1970, 1, 1);
 			}
-    		startDate = parseDate(data.getOrDefault("start_date", ""));
-    		endDate = parseDate(data.getOrDefault("end_date", ""));
-    		serviceId = data.getOrDefault("service_id", "");
-    		data.clear();
+		}
+		@Override
+		public void complete() {
+			available = EnumSet.noneOf(DayOfWeek.class);
+			for (DayOfWeek e : DayOfWeek.values()) {
+				String s = data.getOrDefault(e.toString().toLowerCase(), "0");
+				if (s.equals("1")) available.add(e);
+			}
+			startDate = parseDate(data.getOrDefault("start_date", ""));
+			endDate = parseDate(data.getOrDefault("end_date", ""));
+			serviceId = data.getOrDefault("service_id", "");
+			data.clear();
 		}
 		@Override
 		public String getPrimaryValue() {
-    		return serviceId;
+			return serviceId;
 		}
 		public String jsonStringify() {
-    		StringBuilder sb = new StringBuilder(String.format("\"%s\":{", quote(serviceId)));
-    		Set<LocalDate> added = new TreeSet<>();
-    		Set<LocalDate> removed = new TreeSet<>();
-    		for (Map.Entry<LocalDate, String> e : exceptions.entrySet()) {
-    			if ("add".equals(e.getValue())) {
-    				added.add(e.getKey());
+			StringBuilder sb = new StringBuilder(String.format("\"%s\":{", quote(serviceId)));
+			Set<LocalDate> added = new TreeSet<>();
+			Set<LocalDate> removed = new TreeSet<>();
+			for (Map.Entry<LocalDate, String> e : exceptions.entrySet()) {
+				if ("add".equals(e.getValue())) {
+					added.add(e.getKey());
 				} else if ("remove".equals(e.getValue())) {
-    				removed.add(e.getKey());
+					removed.add(e.getKey());
 				}
 			}
 			long startDay = startDate.toEpochDay();
-    		long endDay = endDate.toEpochDay();
-    		long bitmask = 0;
-    		for (DayOfWeek i : available) {
-    			bitmask |= 1 << i.ordinal();
+			long endDay = endDate.toEpochDay();
+			long bitmask = 0;
+			for (DayOfWeek i : available) {
+				bitmask |= 1 << i.ordinal();
 			}
 			Function<Set<LocalDate>, String> p = s -> {
-    			return Arrays.toString(s.stream().mapToLong(d -> d.toEpochDay() - startDay).toArray());
+				return Arrays.toString(s.stream().mapToLong(d -> d.toEpochDay() - startDay).toArray());
 			};
-    		sb.append(String.format("\"s\":%d,\"e\":%d,\"d\":%d,\"+\":%s,\"-\":%s}", startDay, endDay, bitmask,
+			sb.append(String.format("\"s\":%d,\"e\":%d,\"d\":%d,\"+\":%s,\"-\":%s}", startDay, endDay, bitmask,
 					p.apply(added), p.apply(removed)));
-    		return sb.toString();
+			return sb.toString();
 		}
 	}
 	public static enum RouteType {
@@ -372,15 +428,19 @@ public class BusRoutes {
 	public static class Route extends GenericData implements Comparable<Route> {
 		public long sortOrder = -1;
 		private int number = 0;
+		private final AtomicInteger jsonArrayOrderCounter = new AtomicInteger();
 		private static final AtomicInteger numberCounter = new AtomicInteger();
 		public HashMap<String, Trip> trips = new HashMap<>();
-		public Set<UniqueTripSet> uniqueTrips = new HashSet<>();
+		public List<UniqueTripSet> uniqueTrips = new LinkedList<>();
 		public Route() {
 			super();
 			number = numberCounter.getAndIncrement();
 		}
 		public int getNumber() {
 			return number;
+		}
+		public int incrementJsonArrayCounter() {
+				return jsonArrayOrderCounter.getAndIncrement();
 		}
 		@Override
 		public int compareTo(Route other) {
@@ -389,7 +449,7 @@ public class BusRoutes {
 			} else if (other.sortOrder < sortOrder) {
 				return -1;
 			}
-			return 0;
+			return Comparator.comparingInt(Object::hashCode).compare(this, other);
 		}
 		@Override
 		public void complete() {
@@ -448,12 +508,13 @@ public class BusRoutes {
 	public static <T extends GenericData> HashMap<String, T> parseData
 		(Scanner input, String key, Supplier<? extends T> creator) {
 		HashMap<String, T> ret = new HashMap<>();
+		if (!input.hasNextLine()) return ret;
 		/* Read keys from first line */
 		String firstLine = input.nextLine();
-		String[] keys = firstLine.split(",");
+		String[] keys = splitCSV(firstLine);
 		/* Read each element into map */
 		while (input.hasNextLine()) {
-			String[] values = input.nextLine().split(",");
+			String[] values = splitCSV(input.nextLine());
 			T result = creator.get();
 			for (int i = 0; i < Math.min(keys.length, values.length); i++) {
 				if (values[i].isEmpty()) continue;
@@ -479,9 +540,9 @@ public class BusRoutes {
 	public static void insertStopTimes(HashMap<String, ? extends Trip> trips,
 							HashMap<String, ? extends Stop> stops, Scanner s) {
 		String firstLine = s.nextLine();
-		String[] keys = firstLine.split(",");
+		String[] keys = splitCSV(firstLine);
 		while (s.hasNextLine()) {
-			String[] values = s.nextLine().split(",");
+			String[] values = splitCSV(s.nextLine());
 			StopTime st = new StopTime(keys, values, stops, trips);
 		}
 		for (Trip t : trips.values()) {
@@ -489,7 +550,7 @@ public class BusRoutes {
 		}
 	}
 	public static PrintStream openTextOrDie(String name) {
-    	PrintStream r = null;
+		PrintStream r = null;
 		try {
 			r = new PrintStream(name);
 		} catch (Exception e) {
@@ -507,6 +568,7 @@ public class BusRoutes {
 		try {
 			new File("public/routes/").mkdirs();
 			new File("public/meta/").mkdirs();
+			new File("public/trip-blocks/").mkdirs();
 			routeStream = new FileInputStream("routes.txt");
 			tripStream = new FileInputStream("trips.txt");
 			stopStream = new FileInputStream("stops.txt");
@@ -521,7 +583,7 @@ public class BusRoutes {
 		Scanner routeScanner = new Scanner(routeStream);
 		HashMap<String, Route> routes = parseData(routeScanner, "route_id", Route::new);
 		Scanner tripScanner = new Scanner(tripStream);
-		HashMap<String, Trip> trips = parseData(tripScanner, "trip_id", Trip::new);
+		HashMap<String, Trip> trips = parseData(tripScanner, "trip_id", () -> new Trip(routes));
 		Scanner stopScanner = new Scanner(stopStream);
 		HashMap<String, Stop> stops = parseData(stopScanner, "stop_id", Stop::new);
 		Scanner stopTimeScanner = new Scanner(stopTimeStream);
@@ -562,8 +624,16 @@ public class BusRoutes {
 		index.close();
 		/* Generate a list of unique trips for each route. Each trip is unique if
 		it has the same set of stops. */
+		int nTrips = 0;
 		for (Trip t : trips.values()) {
-			Route tripRoute = routes.get(t.data.get("route_id"));
+			if (nTrips % 500 == 0) {
+				System.out.format("Processing %d trips...", nTrips);
+			}
+			nTrips++;
+			Route tripRoute = t.routeId;
+			if (tripRoute == null) {
+				continue;
+			}
 			boolean found = false;
 			for (UniqueTripSet ts : tripRoute.uniqueTrips) {
 				if (ts.addTrip(t)) {
@@ -629,10 +699,10 @@ public class BusRoutes {
 			routeData.close();
 			System.out.print("html done, ");
 			/* STEP 2: json */
-            PrintStream routeJsonData = openTextOrDie(String.format("public/routes/%s.json", commonHtmlName));
-            routeJsonData.print(Arrays.toString(r.uniqueTrips.stream().flatMap(UniqueTripSet::jsonStringStream)
+			PrintStream routeJsonData = openTextOrDie(String.format("public/routes/%s.json", commonHtmlName));
+			routeJsonData.print(Arrays.toString(r.uniqueTrips.stream().flatMap(UniqueTripSet::jsonStringStream)
 					.filter(((Predicate<String>) String::isEmpty).negate()).toArray()));
-            routeJsonData.close();
+			routeJsonData.close();
 			System.out.println("json done.");
 		}
 		/* STEP 3: stops database */
@@ -665,19 +735,65 @@ public class BusRoutes {
 		routeDB.print("{}]");
 		routeDB.close();
 		System.out.println("done.");
+		/* STEP 5: trip block database */
+		TreeMap<String, SortedSet<Trip>> tripsByBlock = trips.values().parallelStream()
+			.collect(Collectors.groupingBy(b -> b.data.getOrDefault("block_id", ""),
+			TreeMap<String, SortedSet<Trip>>::new,
+			Collectors.toCollection(() -> new TreeSet<Trip>(UniqueTripSet::compareTripsByArrival))));
+		int fileSizeLimit = 16384;
+		LinkedList<String> tailOfAll = new LinkedList<>();
+		Iterator<Map.Entry<String, SortedSet<Trip>>> entries = tripsByBlock.entrySet().iterator();
+		for (int i = 0; entries.hasNext(); i++) {
+			PrintStream tripBlockBucket = openTextOrDie(String.format("public/trip-blocks/%d.json", i));
+			tripBlockBucket.print("{");
+			boolean isFirstEntry = true;
+			String tailEntry = null;
+			for (int j = 0; j < fileSizeLimit; ) {
+				if (!entries.hasNext()) break;
+				Map.Entry<String, SortedSet<Trip>> e = entries.next();
+				if (!isFirstEntry) tripBlockBucket.print(',');
+				isFirstEntry = false;
+				tripBlockBucket.format("\"%s\":", e.getKey());
+				Route initialRoute = null;
+				Stream.Builder<String> b = Stream.builder();
+				for (Trip t : e.getValue()) {
+					Route tripRoute = t.routeId;
+					if (tripRoute != initialRoute) {
+						initialRoute = tripRoute;
+						b.add(String.format("\"!%s\"", quote(tripRoute.getPrimaryValue())));
+					}
+					b.add(String.format("\"%d+%s\"", t.indexInJsonArray, quote(t.getPrimaryValue())));
+				}
+				String result = Arrays.toString(b.build().toArray());
+				j += result.length();
+				tripBlockBucket.print(result);
+				tailEntry = e.getKey();
+			}
+			if (tailEntry == null) {
+				throw new RuntimeException();
+			} else {
+				tailOfAll.add("\"" + tailEntry + "\"");
+			}
+			tripBlockBucket.print("}");
+			tripBlockBucket.close();
+		}
+		/* STEP 6: metadata */
+		PrintStream metadataDB = openTextOrDie("public/meta/meta.json");
+		metadataDB.format("{\"tripBlockLimits\":%s}", Arrays.toString(tailOfAll.toArray()));
+		metadataDB.close();
 	}
 
 	private static void parseCalendar(Map<String,ServiceGroup> g, Scanner calendarDateScanner) {
-    	String keys = calendarDateScanner.nextLine();
-    	String[] kl = keys.split(",");
-    	while (calendarDateScanner.hasNextLine()) {
-    		String values = calendarDateScanner.nextLine();
-    		LocalDate exceptionDate = null;
-    		int exceptionVal = 0;
-    		String serviceId = null;
-    		String[] vl = values.split(",");
-    		for (int i = 0; i < Math.min(kl.length, vl.length); i++) {
-    			switch (kl[i].intern()) {
+		String keys = calendarDateScanner.nextLine();
+		String[] kl = splitCSV(keys);
+		while (calendarDateScanner.hasNextLine()) {
+			String values = calendarDateScanner.nextLine();
+			LocalDate exceptionDate = null;
+			int exceptionVal = 0;
+			String serviceId = null;
+			String[] vl = splitCSV(values);
+			for (int i = 0; i < Math.min(kl.length, vl.length); i++) {
+				switch (kl[i].intern()) {
 					case "date":
 						exceptionDate = ServiceGroup.parseDate(vl[i]);
 						break;
@@ -690,8 +806,8 @@ public class BusRoutes {
 				}
 			}
 			ServiceGroup rsg = g.get(serviceId);
-    		if (exceptionVal != 0 && rsg != null) {
-    			rsg.exceptions.put(exceptionDate, exceptionVal == 1 ? "add" : "remove");
+			if (exceptionVal != 0 && rsg != null) {
+				rsg.exceptions.put(exceptionDate, exceptionVal == 1 ? "add" : "remove");
 			}
 		}
 	}
