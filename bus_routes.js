@@ -23,6 +23,7 @@ function _onhashchange_me(e) {
 		initStopData(() => br_display('s', Number(h.substr(6))));
 		return;
 	} else if (h.search(/^#route-\d+$/) === 0) {
+		showStopOnTrip = -1;
 		initRouteData(() => br_display('r', Number(h.substr(7))));
 		return;
 	} else if (h.search(/^#route-\d+\/\d+$/) === 0) {
@@ -89,17 +90,29 @@ function initStopData(callback) {
 	}
 }
 function initMeta(callback) {
-	if (meta === null) {
-		fetchFile("meta/meta.json", /* @callback */ function(xhr, resp) {
+	initFile(meta, "meta/meta.json", (r) => {
+		meta = r;
+		if (br_rt_departures_obj_export != undefined) {
+			br_rt_departures_obj_export.meta = r;
+		}
+		callback();
+	});
+}
+var serviceData = null;
+function initService(callback) {
+	initFile(serviceData, "meta/service.json", (r) => {
+		serviceData = r;
+		callback();
+	});
+}
+function initFile(orig, filename, callback) {
+	if (orig === null) {
+		fetchFile(filename, /* @callback */ function(xhr, resp) {
 			if (resp === null) return;
-			meta = resp;
-			if (br_rt_departures_obj_export != undefined) {
-				br_rt_departures_obj_export.meta = resp;
-			}
-			callback();
+			callback(resp);
 		}, null);
 	} else {
-		callback();
+		callback(orig);
 	}
 }
 function initRouteData(callback) {
@@ -455,16 +468,43 @@ function displayNoRoutes(v) {
 	if (no_routes) no_routes.style.display = v ? 'none' : 'block';
 }
 function pruneOrUnpruneTrip(tripTableElement) {
-	var currentTime = getTimeNumberFromDate(new Date());
+	var cInstant = new Date();
+	var currentTime = getTimeNumberFromDate(cInstant);
+	/* Check service match */
+	var sd = safeMapAccess(serviceData, tripTableElement.getAttribute('_x_trip_serviceid'));
+	var checkServiceDay = (dateObj) => {
+		let result = true;
+		var currentDate = Math.floor(dateObj.getTime() / 86400000);
+		if (sd != undefined) {
+			var startDate = Number(sd.s);
+			var endDate = Number(sd.e);
+			var dayMask = Number(sd.d);
+			if (currentDate < startDate || currentDate > endDate) {
+				result = false;
+			} else {
+				result = false;
+				var currentDay = cInstant.getDay();
+				if (currentDay === 0) currentDay = 7;
+				if ((1 << currentDay) & dayMask !== 0) result = true;
+				if (Array.isArray(sd['-']) && sd['-'].includes(currentDate - startDate)) result = false;
+				if (Array.isArray(sd['+']) && sd['+'].includes(currentDate - startDate)) result = true;
+			}
+		}
+		return result;
+	};
 	var u = Number(tripTableElement.getAttribute("_x_trip_upperbound"));
 	var l = Number(tripTableElement.getAttribute("_x_trip_lowerbound"));
 	var result = isolateTrip !== null ?
 			isolateTrip === tripTableElement.getAttribute('_x_tripid')
-			: currentTime > l && currentTime < u;
+			: (checkServiceDay(cInstant) && currentTime > l && currentTime < u)
+			|| (checkServiceDay(new Date(cInstant.getTime() - 86400000)) && (currentTime + 43200 > l) && (currentTime + 43200 < u));
 	tripTableElement.style.display = result ? 'inline-block' : 'none';
 	return result;
 }
 function processRoute(rId, tables) {
+	initService(() => processRoute2(rId, tables));
+}
+function processRoute2(rId, tables) {
 	clearTimeout(timerNumber);
 	currentRoute = rId;
 	document.title = rId.s + ": " + rId.l;
@@ -515,7 +555,6 @@ function processRoute(rId, tables) {
 				var stopTimeTd = document.createElement('td');
 				var stopId = stopList[stopN].n;
 				var delta = Number(tripList[tripId].d);
-				var serviceTime = tripList[tripId].s;
 				var arrivalTime = Number(stopList[stopN].a) + delta;
 				var departureTime = Number(stopList[stopN].d) + delta;
 				if (Number.isNaN(departureTime)) departureTime = arrivalTime;
@@ -559,6 +598,8 @@ function processRoute(rId, tables) {
 			}
 			tripTable.setAttribute("_x_trip_lowerbound", earliestTime - BORDER_DELTA);
 			tripTable.setAttribute("_x_trip_upperbound", latestTime + BORDER_DELTA);
+			var serviceTime = tripList[tripId].s;
+			tripTable.setAttribute("_x_trip_serviceid", serviceTime);
 			hasDisplayed = pruneOrUnpruneTrip(tripTable) || hasDisplayed;
 			allTripTables.push(tripTable);
 		}

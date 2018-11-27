@@ -111,7 +111,7 @@ var br_rt_departures_obj_export = new (function () {
 	this.getDeparturesByVehicleAtStop = (routeList, stopId, stopObj, vehicle_info, populateRouteData, populateBlockData, callback) => {
 		var blockId = vehicle_info.trip.block_id;
 		var tripId = vehicle_info.trip.trip_id;
-		var currentVehicleStop = vehicle_info.next_stop_id;
+		var currentVehicleStop = vehicle_info.previous_stop_id || vehicle_info.next_stop_id;
 		var permitRoutes = stopObj.r;
 		
 		var currentTripData = null;
@@ -232,7 +232,7 @@ var br_rt_departures_obj_export = new (function () {
 		for (var i = 0; i < allVehicles.length; i++) {
 			var relevantTripTable = tripsById.get(allVehicles[i].trip.trip_id);
 			if (relevantTripTable == undefined) continue;
-			var relevantStop = allVehicles[i].next_stop_id;
+			var relevantStop = allVehicles[i].previous_stop_id || allVehicles[i].next_stop_id;
 			var rows = relevantTripTable.children;
 			for (var j = 0; j < rows.length; j++) {
 				var stopTd = rows[j].children[0];
