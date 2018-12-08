@@ -43,12 +43,12 @@ function MTDOperations() {
 	this.kickoff_api = function (fetchFileFunc, callback) {
 		var fetchMe = (doIt, o) => {
 			clearTimeout(o.last_api_timer_number);
-			fetchFileFunc("https://webclockbackend.appspot.com/cumtd", function (xhr, res) {
+			fetchFileFunc("https://apps-vm2-cdn.peterjin.org/apps/vehicle-svr/vehicles.json", function (xhr, res) {
 				o.last_api_payload = res;
 				if (doIt && callback) callback();
 				else if (o.repeatCallback !== null) o.repeatCallback();
 			}, null);
-			o.last_api_timer_number = setTimeout(() => fetchMe(false, o), 50000);
+			o.last_api_timer_number = setTimeout(() => fetchMe(false, o), 40000);
 		}
 		if (this.last_api_payload !== null) {
 			if (callback) callback();
@@ -58,7 +58,7 @@ function MTDOperations() {
 	};
 	this.display_location_on_tables = (fetchFileFunc) => {
 		this.repeatCallback = () => br_rt_departures_obj_export
-			.displayLocationOnTripTable(this.last_api_payload.vehicles.vehicles);
+			.displayLocationOnTripTable(this.last_api_payload.vehicles);
 		this.kickoff_api(fetchFileFunc, this.repeatCallback);
 	}
 	this.display_rt_on_table = function (routeList, stopId, stopData,
@@ -68,7 +68,7 @@ function MTDOperations() {
 		this.repeatCallback = function() {
 			if (o.currently_displayed_table !== null)
 				br_rt_departures_obj_export.createDepartureTable(routeList, stopId, stopData,
-					o.last_api_payload.vehicles.vehicles, limit,
+					o.last_api_payload.vehicles, limit,
 					populateRouteData, populateBlockData, o.currently_displayed_table);
 		};
 		tableElem.innerHTML = "<tr><td>Loading...</td></tr>";
