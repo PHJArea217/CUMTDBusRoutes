@@ -170,6 +170,13 @@ function br_display(t, n) {
 				}
 			}
 			window.location.hash = 'routes';
+			let busImageList = ["img/bus-1.jpg"];
+			for (let x of busImageList) {
+				let busImg = document.createElement("img");
+				busImg.src = x;
+				busImg.setAttribute("class", "vehicle-image");
+				main.insertBefore(busImg, null);
+			}
 		};
 		if (routeSelector === null) {
 			var cb = () => {
@@ -317,6 +324,7 @@ function br_show_stop_r2(number) {
 	}
 	displayTableEntry('Routes', routeList);
 	main.insertBefore(stopTable, null);
+	if (!agency_specific_operations) return;
 	var departureTable = document.createElement('table');
 	var populate = (u, c) => fetchFile(u, (x, r) => c(r), null);
 	departureTable.setAttribute('class', 'departure-table');
@@ -474,7 +482,7 @@ function pruneOrUnpruneTrip(tripTableElement) {
 	var sd = safeMapAccess(serviceData, tripTableElement.getAttribute('_x_trip_serviceid'));
 	var checkServiceDay = (dateObj) => {
 		let result = true;
-		var currentDate = Math.floor(dateObj.getTime() / 86400000);
+		var currentDate = Math.floor(dateObj.getTime() / 86400000 - dateObj.getTimezoneOffset() / 1440.0);
 		if (sd != undefined) {
 			var startDate = Number(sd.s);
 			var endDate = Number(sd.e);
