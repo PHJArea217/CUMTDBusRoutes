@@ -6,7 +6,6 @@ function this_is_the_entire_busroutes_js_file() {
 var agency_specific_operations = mtd_ops;
 
 function load() {
-	document.getElementById("main").innerText = "Select 'Routes' or 'Stops' from above.";
 	window.onhashchange = _onhashchange_me;
 	_onhashchange_me(null);
 }
@@ -34,9 +33,12 @@ function _onhashchange_me(e) {
 		return;
 	}
 	if (h === '#routes') br_display('r', null);
-	if (h === '#stops') br_display('s', null);
-	if (h === '#stopsByDistance') br_display('s', 'by-distance');
-	document.title = ORIGINAL_TITLE;
+	else if (h === '#stops') br_display('s', null);
+	else if (h === '#stopsByDistance') br_display('s', 'by-distance');
+	else {
+		document.getElementById("main").innerHTML = "Select 'Routes' or 'Stops' from above.<br /><img src=\"img/bus-1.jpg\" />";
+		document.title = ORIGINAL_TITLE;
+	}
 }
 function fetchFile(name, callback, errorHandler) {
 	name = String(name);
@@ -170,6 +172,7 @@ function br_display(t, n) {
 				}
 			}
 			window.location.hash = 'routes';
+			/*
 			let busImageList = ["img/bus-1.jpg"];
 			for (let x of busImageList) {
 				let busImg = document.createElement("img");
@@ -177,6 +180,7 @@ function br_display(t, n) {
 				busImg.setAttribute("class", "vehicle-image");
 				main.insertBefore(busImg, null);
 			}
+			*/
 		};
 		if (routeSelector === null) {
 			var cb = () => {
