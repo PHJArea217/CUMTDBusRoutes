@@ -302,8 +302,14 @@ function br_show_stop_r2(number) {
 		row.insertBefore(valueTd, null);
 		stopTable.insertBefore(row, null);
 	};
-	
-	displayTableEntry("SMS code", data.c);
+	if (agency_specific_operations.sms_destination_number) {
+		let aElem = document.createElement('a');
+		aElem.setAttribute('href', 'sms:' + agency_specific_operations.sms_destination_number + '?body=' + data.c);
+		aElem.innerText = data.c;
+		displayTableEntry("SMS code", aElem);
+	} else {
+		displayTableEntry("SMS code", data.c);
+	}
 	
 	var aElem = document.createElement('a');
 	aElem.setAttribute('href', data.u);

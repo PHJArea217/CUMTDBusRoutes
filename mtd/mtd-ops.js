@@ -77,6 +77,7 @@ function MTDOperations() {
 			this.repeatCallback();
 		});
 	};
+	this.sms_destination_number = '35890';
 	return this;
 }
 var mtd_ops = MTDOperations.call(new Object());
