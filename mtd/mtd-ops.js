@@ -43,7 +43,7 @@ function MTDOperations() {
 	this.kickoff_api = function (fetchFileFunc, callback) {
 		var fetchMe = (doIt, o) => {
 			clearTimeout(o.last_api_timer_number);
-			fetchFileFunc("https://apps-vm2-cdn.peterjin.org/apps/vehicle-svr/vehicles.json", function (xhr, res) {
+			fetchFileFunc("https://apps-vm2.peterjin.org/apps/vehicle-svr/vehicles.json", function (xhr, res) {
 				o.last_api_payload = res;
 				if (doIt && callback) callback();
 				else if (o.repeatCallback !== null) o.repeatCallback();

@@ -33,7 +33,7 @@ function _onhashchange_me(e) {
 		return;
 	}
 	if (h === '#routes') br_display('r', null);
-	else if (h === '#stops') br_display('s', null);
+	else if (h === '#stops' || h.search(/^#stoplist-last-.$/) === 0) br_display('s', null);
 	else if (h === '#stopsByDistance') br_display('s', 'by-distance');
 	else {
 		document.getElementById("main").innerHTML = "Select 'Routes' or 'Stops' from above.<br /><img src=\"img/bus-1.jpg\" />";
