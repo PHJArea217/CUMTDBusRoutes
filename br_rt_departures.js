@@ -56,28 +56,30 @@ var br_rt_departures_obj_export = new (function () {
 					});
 					for (var n in tripGroup.s) {
 						var stopObj1 = tripGroup.s[n];
-						result.push({type: 1, stop: stopObj1.n, arrival: stopObj1.a + delta, departure: stopObj1.d + delta});
+						result.push({type: 1, stop: stopObj1[0], arrival: stopObj1[1] + delta, departure: stopObj1[2] + delta});
 					}
 				}
 			}
 			callback(result);
 		}
+		let nrCalls = 0;
+		function do_next_call() {
+			if (++nrCalls >= routeSequence.length) parse_route_sequence();
+		}
 		function recursive_populate_route_data(i) {
-			if (i >= routeSequence.length) {
-				parse_route_sequence();
-				return;
-			}
 			var currentRoute = routeList[routeSequence[i]];
 			if (currentRoute.tripInfo === null || currentRoute.tripInfo == undefined) {
 				populateRouteData(currentRoute._, (resultJson) => {
 					currentRoute.tripInfo = resultJson;
-					recursive_populate_route_data(i + 1);
+					do_next_call();
 				});
 			} else {
-				recursive_populate_route_data(i + 1);
+				do_next_call();
 			}
 		}
-		recursive_populate_route_data(0);
+		for (let i = 0; i < routeSequence.length; i++) {
+			recursive_populate_route_data(i);
+		}
 	};
 	this.meta = null;
 	this.allBlocks = Object();
@@ -154,21 +156,22 @@ var br_rt_departures_obj_export = new (function () {
 	this.getAllDeparturesAtStop = (routeList, stopId, stopObj, all_vehicles_array,
 		populateRouteData, populateBlockData, callback) => {
 		if (!(all_vehicles_array instanceof Array)) return;
-		var result = Array();
+		let result = [];
+		let nrCalls = 0;
 		function recursiveCall(i, o) {
-			if (i >= all_vehicles_array.length) {
-				callback(result);
-				return;
-			}
 			o.getDeparturesByVehicleAtStop(routeList, stopId, stopObj, all_vehicles_array[i],
 				populateRouteData, populateBlockData, (r) => {
 				for (var x in r) {
 					result.push(r[x]);
 				}
-				recursiveCall(i + 1, o);
+				if (++nrCalls >= all_vehicles_array.length) {
+					callback(result);
+				}
 			});
 		}
-		recursiveCall(0, this);
+		for (let i = 0; i < all_vehicles_array.length; i++) {
+			recursiveCall(i, this);
+		}
 	};
 	this.createDepartureTable = (routeList, stopId, stopData, all_vehicles_array,
 		limit, populateRouteData, populateBlockData, tableElem) => {
@@ -200,9 +203,9 @@ var br_rt_departures_obj_export = new (function () {
 				trElement.insertBefore(routeColorElem, null);
 
 				/* Other elements */
-				var columns = [e.route.l, e.vehicleId, e.headsign,
+				var columns = [e.route.l, e.headsign,
 					`${e.numberOfStops} stops / ${Math.floor(e.arrivalDelay / 30)} min`,
-					stopData[e.currentStop].n];
+					e.vehicleId, stopData[e.currentStop].n];
 				for (var i in columns) {
 					var el = document.createElement('td');
 					el.innerText = columns[i];
@@ -217,7 +220,7 @@ var br_rt_departures_obj_export = new (function () {
 				hasItem = true;
 			}
 			if (!hasItem)
-				tableElem.innerText = `No departures for the next ${limit / 30} minutes.`;
+				tableElem.innerText = `No departures for the next ${limit / 30} minutes \u2639`;
 		});
 	};
 	this.displayLocationOnTripTable = function(vehicle_info) {
@@ -232,15 +235,18 @@ var br_rt_departures_obj_export = new (function () {
 		for (var i = 0; i < allVehicles.length; i++) {
 			var relevantTripTable = tripsById.get(allVehicles[i].trip.trip_id);
 			if (relevantTripTable == undefined) continue;
-			var relevantStop = allVehicles[i].previous_stop_id || allVehicles[i].next_stop_id;
+			var relevantStop = allVehicles[i].previous_stop_id || '';
+			var relevantStopB = allVehicles[i].next_stop_id || '';
 			var rows = relevantTripTable.children;
 			for (var j = 0; j < rows.length; j++) {
 				var stopTd = rows[j].children[0];
 				if (stopTd == undefined || stopTd === null) continue;
 				if (stopTd.getAttribute('_x_stop_name') === relevantStop)
 					stopTd.style.backgroundColor = '#ffc0c0';
+				else if (stopTd.getAttribute('_x_stop_name') === relevantStopB)
+					stopTd.style.backgroundColor = '#c0ffc0';
 				else
-					stopTd.style.backgroundColor = '#f8fff8';
+					stopTd.style.backgroundColor = stopTd.getAttribute('_x_originalcolor') || '#f8fff8';
 			}
 		}
 	}

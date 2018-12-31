@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.function.Function;
 import java.io.File;
+import java.io.BufferedOutputStream;
 import java.util.function.Predicate;
 import java.time.Instant;
 import java.util.stream.Collectors;
@@ -17,10 +18,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class BusRoutes {
 	public static String quote(String s) {
-		return s.replace("\"", "\\\"");
+		if (s == null) return "";
+		StringBuilder sb = new StringBuilder();
+		for (char c : s.toCharArray()) {
+			sb.append((c == '"' || c == '\\' || c > 128) ? String.format("\\u%04x", (int) c) : c);
+		}
+		return sb.toString();
 	}
 	public static String[] splitCSV(String s0) {
-		LinkedList<String> s = new LinkedList<>();
+		ArrayList<String> s = new ArrayList<>(20);
 		StringBuilder sb = new StringBuilder();
 		boolean inQuote = false;
 		boolean lastQuote = false;
@@ -28,7 +34,8 @@ public class BusRoutes {
 			if (c == '\uFEFF') continue;
 			if (c == ',' && inQuote == false) {
 				lastQuote = false;
-				s.add(sb.toString());
+				String st = sb.toString();
+				s.add("\"".equals(st) ? "" : st);
 				sb = new StringBuilder();
 			} else if (c == '"') {
 				if (lastQuote == true) {
@@ -80,10 +87,11 @@ public class BusRoutes {
 		}
 		@Override
 		public void complete() {
-				if (routeLookupTable != null) {
-					routeId = routeLookupTable.get(data.getOrDefault("route_id", ""));
-				}
-				routeLookupTable = null;
+			if (routeLookupTable != null) {
+				routeId = routeLookupTable.get(data.getOrDefault("route_id", ""));
+			}
+			routeLookupTable = null;
+			data.putIfAbsent("block_id", String.valueOf(Math.random()));
 		}
 		public void orderStopTimes() {
 			long order = 0;
@@ -94,16 +102,17 @@ public class BusRoutes {
 		public String getHeading() {
 			return data.getOrDefault("trip_headsign", "");
 		}
+		static final int compareALessThanB = Integer.MIN_VALUE + 1;
+		static final int compareAGreaterThanB = Integer.MIN_VALUE + 2;
+		static final int compareUndefined = Integer.MIN_VALUE;
+		static Comparator<Trip> initialConditionComparator = Comparator.nullsFirst(Comparator.comparingInt((Trip t) -> t.stopTimes.size()).thenComparing(Trip::getHeading));
 		/* Return time difference between similar trips, or -1 if dissimilar */
 		public static int compress(Trip a, Trip b) {
-			if (a == null || b == null) {
-				return -1;
-			}
-			if (a.stopTimes.size() == 0 || b.stopTimes.size() == 0) {
-				return -1;
-			}
-			if (!a.getHeading().equals(b.getHeading())) {
-				return -1;
+			if (a == b) return 0;
+			int r = initialConditionComparator.compare(a, b);
+			if (r != 0) return r < 0 ? compareALessThanB : compareAGreaterThanB;
+			if (a == null || a.stopTimes.size() == 0) {
+				return compareUndefined;
 			}
 			int initialDifference = b.stopTimes.first().arrivalTime
 					- a.stopTimes.first().arrivalTime;
@@ -112,13 +121,21 @@ public class BusRoutes {
 			while (i.hasNext() && j.hasNext()) {
 				StopTime bn = i.next();
 				StopTime an = j.next();
-				if ((bn.arrivalTime - an.arrivalTime) != initialDifference) {
-					return -1;
-				} else if ((bn.departureTime - an.departureTime) != initialDifference) {
-					return -1;
+				int n;
+				if ((n = (bn.arrivalTime - an.arrivalTime) - initialDifference) != 0) {
+					return n > 0 ? compareALessThanB : compareAGreaterThanB;
+				} else if ((n = (bn.departureTime - an.departureTime) - initialDifference) != 0) {
+					return n > 0 ? compareALessThanB : compareAGreaterThanB;
 				}
 			}
-			return (!i.hasNext() && !j.hasNext()) ? initialDifference : -1;
+			return (!i.hasNext() && !j.hasNext()) ? initialDifference : i.hasNext() ? compareAGreaterThanB : compareALessThanB;
+		}
+		public static int tripCompareSort(Trip a, Trip b) {
+			switch (compress(a, b)) {
+				case compareALessThanB: return -1;
+				case compareAGreaterThanB: return 1;
+				default: return 0;
+			}
 		}
 		public String jsonStringifyStops() {
 			return "[" + String.join(",", stopTimes.stream().map(StopTime::jsonStringify)
@@ -143,12 +160,14 @@ public class BusRoutes {
 		/* All stop times */
 		public final Map<String, HashSet<StopTime>> stopTimesAtEachStop;
 		public int count = 0;
+		static Comparator<StopTime> c00 = Comparator.nullsFirst(Comparator.comparingInt((StopTime s)
+			-> (int) s.arrivalTime));
+		static Comparator<Trip> c002 = Comparator.comparing(Trip::getPrimaryValue);
 		public static int compareTripsByArrival(Trip a, Trip b) {
-			StopTime aS = a.stopTimes.isEmpty() ? null : a.stopTimes.first();
-			StopTime bS = b.stopTimes.isEmpty() ? null : b.stopTimes.first();
-			int r = Comparator.nullsFirst(Comparator.comparingInt((StopTime s)
-				-> (int) s.arrivalTime)).compare(aS, bS);
-			return r == 0 ? Comparator.comparing(Trip::getPrimaryValue).compare(a, b) : r;
+			StopTime aS = a.stopTimes.isEmpty() ? null : a.stopTimes.last();
+			StopTime bS = b.stopTimes.isEmpty() ? null : b.stopTimes.last();
+			int r = c00.compare(aS, bS);
+			return r == 0 ? c002.compare(a, b) : r;
 		}
 		public UniqueTripSet(Trip t) {
 			data = Collections.unmodifiableMap(t.data);
@@ -203,9 +222,10 @@ public class BusRoutes {
 						"1".equals(t.data.get("direction_id")) ? "true" : "false",
 						quote(t.getId()), t.jsonStringifyMetadata(0));
 			};
-			for (Trip t : trips) {
+			Trip[] sorted = trips.stream().sorted(Trip::tripCompareSort).toArray(Trip[]::new);
+			for (Trip t : sorted) {
 				int diff = Trip.compress(last, t);
-				if (diff == -1) {
+				if (diff < Integer.MIN_VALUE + 3) {
 					/* Our trip is different from the last one */
 					if (last != null) {
 						tempStr.append("}}");
@@ -316,13 +336,14 @@ public class BusRoutes {
 						break;
 				}
 			}
-			if (tripId != null)
+			if (tripId != null && stopId != null)
 				tripId.stopTimes.add(this);
 		}
+		private static final Comparator<Object> hashCodeComparator = Comparator.comparing(Object::hashCode);
 		@Override
 		public int compareTo(StopTime other) {
 			int r = Long.compare(this.stopSequence, other.stopSequence);
-			return r == 0 ? Comparator.comparing(Object::hashCode).compare(this, other) : r;
+			return r == 0 ? hashCodeComparator.compare(this, other) : r;
 		}
 		@Override
 		public String toString() {
@@ -335,10 +356,10 @@ public class BusRoutes {
 		public String jsonStringify() {
 			String sName = quote(stopId.data.getOrDefault("stop_id", ""));
 			if (arrivalTime != departureTime) {
-				return String.format("{\"n\":\"%s\",\"a\":%d,\"d\":%d}",
+				return String.format("[\"%s\",%d,%d]",
 						sName, arrivalTime, departureTime);
 			} else {
-				return String.format("{\"n\":\"%s\",\"a\":%d}",
+				return String.format("[\"%s\",%d]",
 						sName, arrivalTime);
 			}
 		}
@@ -431,7 +452,7 @@ public class BusRoutes {
 		private final AtomicInteger jsonArrayOrderCounter = new AtomicInteger();
 		private static final AtomicInteger numberCounter = new AtomicInteger();
 		public HashMap<String, Trip> trips = new HashMap<>();
-		public List<UniqueTripSet> uniqueTrips = new LinkedList<>();
+		public List<UniqueTripSet> uniqueTrips = new ArrayList<>();
 		public Route() {
 			super();
 			number = numberCounter.getAndIncrement();
@@ -484,6 +505,7 @@ public class BusRoutes {
 			String[][] attr = new String[][] {{"route_short_name", "s"},
 				{"route_long_name", "l"}, {"route_desc", "d"},
 				{"route_type", "t"}, {"route_color", "b"},
+				{"route_url", "u"},
 				{"route_text_color", "f"}};
 			for (String[] a : attr) {
 				Optional.ofNullable(data.get(a[0])).ifPresent(v ->
@@ -499,7 +521,11 @@ public class BusRoutes {
 	}
 	public static String sanitizeHtml(String original, boolean isHtml) {
 		if (isHtml) {
-			return original.replace("<", "&lt;");
+			StringBuilder sb = new StringBuilder();
+			for (char c : original.toCharArray()) {
+				sb.append((c == '<' || c == '&' || c > 128) ? "&#" + (int) c + ";" : c);
+			}
+			return sb.toString();
 		} else {
 			return original.replace("<", "%3C").replace(">", "%3E")
 				.replace("\"", "%22").replace(";", "%3B");
@@ -513,12 +539,15 @@ public class BusRoutes {
 		String firstLine = input.nextLine();
 		String[] keys = splitCSV(firstLine);
 		/* Read each element into map */
+		for (int i = 0; i < keys.length; i++) {
+			keys[i] = keys[i].trim().intern();
+		}
 		while (input.hasNextLine()) {
 			String[] values = splitCSV(input.nextLine());
 			T result = creator.get();
 			for (int i = 0; i < Math.min(keys.length, values.length); i++) {
 				if (values[i].isEmpty()) continue;
-				result.data.put(keys[i].intern(), values[i].intern());
+				result.data.put(keys[i], values[i].intern());
 			}
 			String keyV = result.data.get(key);
 			result.complete();
@@ -541,6 +570,9 @@ public class BusRoutes {
 							HashMap<String, ? extends Stop> stops, Scanner s) {
 		String firstLine = s.nextLine();
 		String[] keys = splitCSV(firstLine);
+		for (int i = 0; i < keys.length; i++) {
+			keys[i] = keys[i].trim().intern();
+		}
 		while (s.hasNextLine()) {
 			String[] values = splitCSV(s.nextLine());
 			StopTime st = new StopTime(keys, values, stops, trips);
@@ -610,79 +642,84 @@ public class BusRoutes {
 		}
 		index.println("<ul>");
 		Route[] routeArray = routes.values().toArray(new Route[0]);
-		Arrays.sort(routeArray, Comparator.comparing((Function<Route, String>) r -> r.data.get("route_short_name")));
+		Arrays.sort(routeArray, Comparator.comparing((Function<Route, String>) r -> r.data.getOrDefault("route_short_name", "")));
 		for (Route r : routeArray) {
-			String backColor = onlyIf(r.data.get("route_color"), t -> t.matches("[0-9a-f]{6}"));
-			String foreColor = onlyIf(r.data.get("route_text_color"), t -> t.matches("[0-9a-f]{6}"));
+			String backColor = onlyIf(r.data.get("route_color"), t -> t.matches("[0-9a-fA-F]{6}"));
+			String foreColor = onlyIf(r.data.get("route_text_color"), t -> t.matches("[0-9a-fA-F]{6}"));
 			if (backColor == null) backColor = "ffffff";
 			if (foreColor == null) foreColor = "000000";
 			index.print(String.format("<li><span style=\"background-color: #%s; color: #%s;\">", backColor, foreColor));
 			index.format("%s</span> (<a href=\"routes/%s.html\">View stops</a>)</li>", 
-					sanitizeHtml(r.getFullName(), false), getHtmlFileName(r.data.get("route_id")));
+					sanitizeHtml(r.getFullName(), true), getHtmlFileName(r.data.get("route_id")));
 		}
 		index.format("</ul><p>Last Updated: %s</p>", Instant.now());
 		index.close();
 		/* Generate a list of unique trips for each route. Each trip is unique if
 		it has the same set of stops. */
-		int nTrips = 0;
-		for (Trip t : trips.values()) {
+		AtomicInteger nTripsI = new AtomicInteger();
+		trips.values().parallelStream().sorted(Comparator.comparingInt(System::identityHashCode)).forEach(t -> {
+			int nTrips = nTripsI.getAndIncrement();
 			if (nTrips % 500 == 0) {
+				Runtime.getRuntime().gc();
 				System.out.format("Processing %d trips...", nTrips);
 			}
-			nTrips++;
 			Route tripRoute = t.routeId;
 			if (tripRoute == null) {
-				continue;
+				return;
 			}
 			boolean found = false;
-			for (UniqueTripSet ts : tripRoute.uniqueTrips) {
-				if (ts.addTrip(t)) {
-					found = true;
-					break;
+			synchronized (tripRoute.uniqueTrips) {
+				for (UniqueTripSet ts : tripRoute.uniqueTrips) {
+					if (ts.addTrip(t)) {
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					tripRoute.uniqueTrips.add(new UniqueTripSet(t));
 				}
 			}
-			if (!found) {
-				tripRoute.uniqueTrips.add(new UniqueTripSet(t));
-			}
-		}
-		for (Route r : routes.values()) {
+		});
+		routes.values().parallelStream().forEach(r -> {
 			/* STEP 1: static route html files */
 			String commonHtmlName = getHtmlFileName(r.data.get("route_id"));
-			PrintStream routeData = openTextOrDie(String.format("public/routes/%s.html", commonHtmlName));
+			PrintStream routeData = new PrintStream(new BufferedOutputStream(openTextOrDie(String.format("public/routes/%s.html", commonHtmlName))));
 			System.out.print("Processing " + r.getLongName() + "... ");
 			routeData.println("<!DOCTYPE html>\n<html><head><title>");
-			routeData.print(sanitizeHtml(r.getFullName(), false));
+			routeData.print(sanitizeHtml(r.getFullName(), true));
 			routeData.print("</title></head><body><h1>");
-			routeData.print(sanitizeHtml(r.getFullName(), false));
+			routeData.print(sanitizeHtml(r.getFullName(), true));
 			routeData.print("</h1>");
 			for (UniqueTripSet s : r.uniqueTrips) {
 				routeData.print(String.format("<h2>%s</h2>", sanitizeHtml(s.data.getOrDefault("trip_headsign", ""), true)));
 				routeData.print("<table border=1>");
 				for (StopTime st : s.stopList) {
 					/* Indicate in the Stop object that it is part of this route (r) */
-					st.stopId.servicedRoutes.add(r);
+					synchronized (st.stopId) {
+						st.stopId.servicedRoutes.add(r);
+					}
 					routeData.print("<tr><td style=\"white-space: nowrap;\">");
 					routeData.print(sanitizeHtml(st.stopId.data.get("stop_name"), true));
 					routeData.print("</td>");
-					Set<StopTime> tempAT = s.stopTimesAtEachStop.get(st.stopIdAndOrder());
-					StopTime[] allTimes = tempAT.toArray(new StopTime[0]);
-					Arrays.sort(allTimes, Comparator.comparingInt(n -> (int) n.arrivalTime));
 					Trip lastTrip = null;
-					short lastArrivalTime = StopTime.INVALID_TIME;
-					for (StopTime indivTime : allTimes) {
+					for (Trip t : s.trips) {
+						StopTime indivTime = t.stopTimes.stream().filter(t1 -> t1.stopSequence == st.stopSequence).findAny().orElse(null);
+						if (indivTime == null) continue;
 						StringBuilder sb = new StringBuilder();
 						/* Eliminate duplicate trips */
-						if (indivTime.tripId != lastTrip) {
-							lastTrip = indivTime.tripId;
+						if (Trip.compress(t, lastTrip) != 0) {
+							lastTrip = t;
 						} else {
 							continue;
 						}
-						/* Eliminate duplicate arrival times */
+						/*
+						/ Eliminate duplicate arrival times /
 						if (indivTime.arrivalTime != lastArrivalTime) {
 							lastArrivalTime = indivTime.arrivalTime;
 						} else {
 							continue;
 						}
+						*/
 						sb.append(StopTime.expandTime(indivTime.arrivalTime));
 						if (indivTime.departureTime != indivTime.arrivalTime) {
 							sb.append(" - ");
@@ -704,7 +741,7 @@ public class BusRoutes {
 					.filter(((Predicate<String>) String::isEmpty).negate()).toArray()));
 			routeJsonData.close();
 			System.out.println("json done.");
-		}
+		});
 		/* STEP 3: stops database */
 		System.out.print("Generating stops.json... ");
 		PrintStream stopDB = openTextOrDie("public/meta/stops.json");
@@ -772,7 +809,7 @@ public class BusRoutes {
 			if (tailEntry == null) {
 				throw new RuntimeException();
 			} else {
-				tailOfAll.add("\"" + tailEntry + "\"");
+				tailOfAll.add("\"" + quote(tailEntry) + "\"");
 			}
 			tripBlockBucket.print("}");
 			tripBlockBucket.close();
@@ -806,6 +843,14 @@ public class BusRoutes {
 				}
 			}
 			ServiceGroup rsg = g.get(serviceId);
+			if (rsg == null) {
+				rsg = new ServiceGroup();
+				rsg.data.put("start_date", "20181225");
+				rsg.data.put("end_date", "20191231");
+				rsg.data.put("service_id", serviceId);
+				rsg.complete();
+				g.put(serviceId, rsg);
+			}
 			if (exceptionVal != 0 && rsg != null) {
 				rsg.exceptions.put(exceptionDate, exceptionVal == 1 ? "add" : "remove");
 			}

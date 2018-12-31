@@ -2,6 +2,10 @@
 	font-weight: bold;
 	font-size: 48px;
 }
+#subtitle {
+	font-weight: bold;
+	font-size: 18px;
+}
 #all {
 	text-align: center;
 	margin-left: auto;
@@ -16,7 +20,7 @@
 	padding-bottom: 8px;
 }
 #route-selector-wrapper {
-	padding-bottom: 8px;
+	padding: 8px;
 }
 .stop-name {
 	color: #000;

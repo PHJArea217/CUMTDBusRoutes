@@ -3,7 +3,7 @@
 function this_is_the_entire_busroutes_js_file() {
 
 /* Replace if necessary */
-var agency_specific_operations = mtd_ops;
+var agency_specific_operations = "mtd_ops" in window ? mtd_ops : {};
 
 function load() {
 	window.onhashchange = _onhashchange_me;
@@ -33,13 +33,16 @@ function _onhashchange_me(e) {
 		return;
 	}
 	if (h === '#routes') br_display('r', null);
-	else if (h === '#stops' || h.search(/^#stoplist-last-.$/) === 0) br_display('s', null);
+	else if (h === '#stops' || (h.search(/^#stoplist-last-.$/) === 0)) {
+		if (document.getElementById('stop-list-plain') === null || h === '#stops') br_display('s', null);
+	}
 	else if (h === '#stopsByDistance') br_display('s', 'by-distance');
 	else {
 		document.getElementById("main").innerHTML = "Select 'Routes' or 'Stops' from above.<br /><img src=\"img/bus-1.jpg\" />";
 		document.title = ORIGINAL_TITLE;
 	}
 }
+var callbackQueue = {};
 function fetchFile(name, callback, errorHandler) {
 	name = String(name);
 	var cacheKey = name.startsWith("http") ? null : "br json cache " + name;
@@ -50,7 +53,15 @@ function fetchFile(name, callback, errorHandler) {
 			if (xhr.status === 200) {
 				var rt = xhr.responseText;
 				if (cacheKey !== null) sessionStorage.setItem(cacheKey, rt);
-				callback(xhr, JSON.parse(rt));
+				let json = JSON.parse(rt);
+				if (cacheKey in callbackQueue) {
+					for (let x of callbackQueue[cacheKey]) {
+						x(xhr, json);
+					}
+					callbackQueue[cacheKey] = [];
+				} else {
+					callback(xhr, json);
+				}
 			} else {
 				if (errorHandler !== null) {
 					errorHandler(xhr);
@@ -62,6 +73,12 @@ function fetchFile(name, callback, errorHandler) {
 		var r = sessionStorage.getItem(cacheKey);
 		if (r != undefined && r !== null) {
 			callback(null, JSON.parse(r));
+			return;
+		}
+		if (callbackQueue[cacheKey] == undefined) {
+			callbackQueue[cacheKey] = [callback];
+		} else {
+			callbackQueue[cacheKey].push(callback);
 			return;
 		}
 	}
@@ -134,6 +151,7 @@ function initRouteData(callback) {
 	}
 }
 function getTimeNumber(number) {
+	if (number == 32767) return ' ';
 	var adj = Number(number) + 32768;
 	if (Number.isNaN(adj)) return "";
 	var h = Math.floor(adj / 1800);
@@ -159,6 +177,7 @@ function safeMapAccess(m, i) {
 function br_display(t, n) {
 	var main = document.getElementById("main");
 	if (t === 'r') {
+		document.title = "Routes";
 		clearTimeout(timerNumber);
 		main.innerHTML = "";
 		var display_preselected_route = () => {
@@ -171,7 +190,6 @@ function br_display(t, n) {
 					return;
 				}
 			}
-			window.location.hash = 'routes';
 			/*
 			let busImageList = ["img/bus-1.jpg"];
 			for (let x of busImageList) {
@@ -208,6 +226,7 @@ function br_display(t, n) {
 			}
 			return;
 		}
+		document.title = "Stops";
 		clearTimeout(timerNumber);
 		main.innerHTML = '';
 		var mycb = function(by_distance) {
@@ -230,22 +249,30 @@ function br_display(t, n) {
 				elements.sort(_compareRouteName((a) => Number(a.getAttribute('_x_distance'))));
 			var displayList = document.createElement('ul');
 			var letterList = document.createElement('div');
-			var letterList_text = "";
+			var letterList_text = "Use Ctrl-F to search for stops<br />";
 			var lastLetter = '-';
-			for (var i in elements) {
+			let currentHash = window.location.hash;
+			let displayData = function(i) {
+				let doFocus = false;
 				if (!by_distance) {
 					var letter = elements[i].innerText.charAt(0).toUpperCase();
 					if (letter.search(/\w/) === 0 && letter !== lastLetter) {
 						lastLetter = letter;
 						elements[i].setAttribute('id', 'stoplist-last-' + letter);
 						letterList_text += `<a href="#stoplist-last-${letter}">${letter}</a> `;
+						letterList.innerHTML = letterList_text;
+						if (currentHash === `#stoplist-last-${letter}`)
+							doFocus = true;
 					}
 				}
 				var liWrapper = document.createElement('li');
 				liWrapper.insertBefore(elements[i], null);
 				displayList.insertBefore(liWrapper, null);
+				if (doFocus) elements[i].focus();
+			};
+			for (let i in elements) {
+				setTimeout(() => displayData(i), 0);
 			}
-			letterList.innerHTML = letterList_text;
 			var divWrapper = document.createElement('div');
 			divWrapper.insertBefore(displayList, null);
 			divWrapper.setAttribute('id', 'stop-list-plain');
@@ -253,7 +280,7 @@ function br_display(t, n) {
 			main.insertBefore(divWrapper, null);
 		};
 		if (n === 'by-distance') {
-			initStopData(() => populate_stop_distances(() => mycb(true)));
+			initStopData(() => populate_stop_distances(() => mycb(true), true));
 		} else {
 			initStopData(() => mycb(false));
 		}
@@ -310,12 +337,47 @@ function br_show_stop_r2(number) {
 	} else {
 		displayTableEntry("SMS code", data.c);
 	}
-	
-	var aElem = document.createElement('a');
-	aElem.setAttribute('href', data.u);
-	aElem.innerText = data.u;
-	displayTableEntry("URL", aElem);
-	
+	displayTableEntry("Information", data.d);
+	if (String(data.u).startsWith("http")) {
+		var aElem = document.createElement('a');
+		aElem.setAttribute('href', data.u);
+		aElem.innerText = data.u;
+		displayTableEntry("URL", aElem);
+	}
+	let location_ = [Number(data.y), Number(data.x)];
+	if (location_[0] > -90 && location_[1] > -180) {
+		var xElem = document.createElement("span");
+		let ns = 'N';
+		let ew = 'E';
+		let mylat = location_[0];
+		let mylon = location_[1];
+		if (location_[0] < 0) {mylat = -mylat; ns = 'S';};
+		if (location_[1] < 0) {mylon = -mylon; ew = 'W';};
+		xElem.innerHTML = `${mylat} ${ns}, ${mylon} ${ew}<br /><a href="https://www.openstreetmap.org/?mlat=${location_[0]}&mlon=${location_[1]}&zoom=15">View on OpenStreetMap</a>`
+		displayTableEntry("Location", xElem);
+	}
+	/* nearby stops */
+	let nearbyStops = [];
+	for (let s in stopData) {
+		if (s === name) continue;
+		nearbyStops.push(stopData[s]);
+	}
+	populate_stop_distances(null, false)({coords: {latitude: data.y, longitude: data.x}});
+	nearbyStops.sort(_compareRouteName(i => i.distanceFromHome));
+
+	let nearbyStopList = document.createElement('div');
+	const hardLimitE = 10;
+	for (let i = 0; i < hardLimitE; i++) {
+		if (i >= nearbyStops.length) break;
+		let divElemOfStop = document.createElement('div');
+		let aElemOfStop = document.createElement('a');
+		aElemOfStop.innerText = nearbyStops[i].n + ` (${nearbyStops[i].distanceFromHome} m)`;
+		aElemOfStop.setAttribute('href', '#stop-' + nearbyStops[i].number);
+		divElemOfStop.insertBefore(aElemOfStop, null);
+		nearbyStopList.insertBefore(divElemOfStop, null);
+	}
+	displayTableEntry("Nearby stops", nearbyStopList);
+
 	var routeList = document.createElement('div');
 	if (!(data.r instanceof Array)) {
 		data.r = [];
@@ -351,12 +413,12 @@ function br_show_stop_r2(number) {
 	departureTable.insertBefore(link, null);
 	main.insertBefore(departureTable, null);
 }
-function populate_stop_distances(callback) {
+function populate_stop_distances(callback, doGeo) {
 	/* https://en.wikipedia.org/wiki/Geographic_coordinate_system */
 	var wgs84_latPos = (y) => (-0.0023*Math.sin(6*y)/6 + 1.175*Math.sin(4*y)/4 - 559.82*Math.sin(2*y)/2 + 111132.92*y) * 180 / Math.PI;
 	var wgs84_lonPos = (x, y) => x * (0.118*Math.cos(5*y) - 93.5*Math.cos(3*y) + 111412.84*Math.cos(y)) * 180 / Math.PI;
-	if ("geolocation" in navigator) {
-		navigator.geolocation.getCurrentPosition((position) => {
+	if (!doGeo || "geolocation" in navigator) {
+		var lb = (position) => {
 			var yAngle = position.coords.latitude / 180 * Math.PI;
 			var yPos = wgs84_latPos(yAngle);
 			var xPos = wgs84_lonPos(position.coords.longitude / 180 * Math.PI, yAngle);
@@ -368,8 +430,12 @@ function populate_stop_distances(callback) {
 				if (Number.isNaN(stopX + stopY)) continue;
 				stopData[s].distanceFromHome = Math.round(Math.hypot(yPos - stopY, xPos - stopX));
 			}
-			callback(stopData);
-		});
+			if (callback) callback(stopData);
+		};
+		if (doGeo)
+			navigator.geolocation.getCurrentPosition(lb);
+		else
+			return lb;
 	} else {
 		alert('Sorry, geolocation unavailable.');
 	}
@@ -424,7 +490,9 @@ function displayRoute(rId) {
 	if (tables === null) return;
 	tables.innerHTML = '<div id="no-routes" style="display: none">No trips \
 	currently running for this route. Please try again later or select \
-	a different route.</div><div id="trip-count"></div>';
+	a different route.</div><div id="trip-count">Loading...</div> \
+	<div>This is a <span style="font-weight: bold;" id="typeofroute"></span> route.</div> \
+	<div id="trip-tables"></div>';
 	routeTitleElem = insert_display_element3('route_title',
 				tables, document.getElementById("no-routes"));
 	var title = routeTitleElem;
@@ -440,8 +508,13 @@ function displayRoute(rId) {
 	} else {
 		initStopData(() => processRoute(rId, tables));
 	}
+	let typeofroute = document.getElementById('typeofroute');
+	if (typeofroute) {
+		const types = ["light rail", "subway", "train", "bus", "ferry", "cable car", "gondola", "funicular"];
+		typeofroute.innerText = types[Number(rId.t)];
+	}
 }
-function routeTimer() {
+function routeTimer(refreshText) {
 	clearTimeout(timerNumber);
 	var currentTime = getTimeNumberFromDate(new Date());
 	var allElems = document.getElementsByClassName('trip-time');
@@ -454,32 +527,52 @@ function routeTimer() {
 			}
 		}
 	}
-	var allTrips = document.getElementsByClassName('trip-table');
+	var allTrips = currentRoute.tripsByTime;
 	var numberOfTrips = 0;
-	for (var i = 0; i < allTrips.length; i++) {
-		if (allTrips[i] === null) continue;
-		if (pruneOrUnpruneTrip(allTrips[i])) numberOfTrips++;
+	for (let i of allTrips) {
+		if (currentRoute.trips[i] === null) continue;
+		if (pruneOrUnpruneTrip(currentRoute.trips[i])) numberOfTrips++;
 	}
 	displayNoRoutes(numberOfTrips !== 0);
 	var numberDisplay = document.getElementById('trip-count');
-	if (numberDisplay !== null) {
+	if (refreshText && numberDisplay !== null) {
 		if (isolateTrip === null) {
-			numberDisplay.innerText = `${numberOfTrips} of ${allTrips.length} trips\
+			numberDisplay.innerHTML = `<div id="route-desc"></div> \
+				<span id="1tripN"></span> of ${allTrips.length} trips\
 			running for this route. `;
-			var viewAllRoutes = document.createElement('a');
+			let viewAllRoutes = document.createElement('a');
 			/* XXX: Note "_" route attribute and static file name change */
 			viewAllRoutes.setAttribute('href', String(currentRoute._).replace(/\.json$/, '.html'));
 			viewAllRoutes.innerText = 'View all trips';
 			numberDisplay.insertBefore(viewAllRoutes, null);
+			if (currentRoute.hasOwnProperty("u")) {
+				viewAllRoutes = document.createElement('a');
+				viewAllRoutes.setAttribute('href', currentRoute.u);
+				viewAllRoutes.innerText = currentRoute.u;
+				let divWrapper = document.createElement('div');
+				divWrapper.insertBefore(viewAllRoutes, null);
+				numberDisplay.insertBefore(divWrapper, null);
+			}
+			if (currentRoute.hasOwnProperty("d")) {
+				document.getElementById('route-desc').innerText = currentRoute.d;
+			}
 		} else {
 			numberDisplay.innerText = `Showing a single trip (${String(isolateTrip)}). `;
 			var viewAllTrips = document.createElement('a');
-			viewAllTrips.setAttribute('href', '#route-' + Number(currentRoute.number));
+			viewAllTrips.setAttribute('href', 'javascript:void(0);');
+			viewAllTrips.addEventListener('click', function (e) {
+				isolateTrip = null;
+				routeTimer(true);
+			}, null);
 			viewAllTrips.innerText = 'Back';
 			numberDisplay.insertBefore(viewAllTrips, null);
 		}
 	}
-	timerNumber = setTimeout(routeTimer, 1000);
+	if (isolateTrip === null) {
+		let tripN = document.getElementById('1tripN');
+		if (tripN) tripN.innerText = numberOfTrips;
+	}
+	timerNumber = setTimeout(() => routeTimer(false), 3000);
 }
 function displayNoRoutes(v) {
 	var no_routes = document.getElementById("no-routes");
@@ -489,7 +582,7 @@ function pruneOrUnpruneTrip(tripTableElement) {
 	var cInstant = new Date();
 	var currentTime = getTimeNumberFromDate(cInstant);
 	/* Check service match */
-	var sd = safeMapAccess(serviceData, tripTableElement.getAttribute('_x_trip_serviceid'));
+	var sd = safeMapAccess(serviceData, tripTableElement.serviceId);
 	var checkServiceDay = (dateObj) => {
 		let result = true;
 		var currentDate = Math.floor(dateObj.getTime() / 86400000 - dateObj.getTimezoneOffset() / 1440.0);
@@ -503,20 +596,39 @@ function pruneOrUnpruneTrip(tripTableElement) {
 				result = false;
 				var currentDay = cInstant.getDay();
 				if (currentDay === 0) currentDay = 7;
-				if ((1 << currentDay) & dayMask !== 0) result = true;
+				if (((1 << currentDay) & dayMask) !== 0) result = true;
 				if (Array.isArray(sd['-']) && sd['-'].includes(currentDate - startDate)) result = false;
 				if (Array.isArray(sd['+']) && sd['+'].includes(currentDate - startDate)) result = true;
 			}
 		}
 		return result;
 	};
-	var u = Number(tripTableElement.getAttribute("_x_trip_upperbound"));
-	var l = Number(tripTableElement.getAttribute("_x_trip_lowerbound"));
+	var u = Number(tripTableElement.upperBound);
+	var l = Number(tripTableElement.lowerBound);
 	var result = isolateTrip !== null ?
-			isolateTrip === tripTableElement.getAttribute('_x_tripid')
+			isolateTrip === tripTableElement.id
 			: (checkServiceDay(cInstant) && currentTime > l && currentTime < u)
 			|| (checkServiceDay(new Date(cInstant.getTime() - 86400000)) && (currentTime + 43200 > l) && (currentTime + 43200 < u));
-	tripTableElement.style.display = result ? 'inline-block' : 'none';
+	var display = result ? 'inline-block' : 'none';
+	if (result) {
+		if (!tripTableElement.table) {
+			tripTableElement.genTable();
+		}
+		let tables = document.getElementById('trip-tables');
+		let found = false;
+		for (let i = 0; i < tables.children.length; i++) {
+			if (tables.children.item(i).getAttribute("_x_tripid") === tripTableElement.table.getAttribute("_x_tripid")) {
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			tables.insertBefore(tripTableElement.table, null);
+		}
+	}
+	if (tripTableElement.table) {
+		tripTableElement.table.style.display = display;
+	}
 	return result;
 }
 function processRoute(rId, tables) {
@@ -525,111 +637,156 @@ function processRoute(rId, tables) {
 function processRoute2(rId, tables) {
 	clearTimeout(timerNumber);
 	currentRoute = rId;
+	if (rId.trips == undefined) rId.trips = {};
 	document.title = rId.s + ": " + rId.l;
-	var currentTime = getTimeNumberFromDate(new Date());
+	let currentTime = getTimeNumberFromDate(new Date());
 	var BORDER_DELTA = 300; /* 10 minutes */
-	var hasDisplayed = false;
-	var allTripTables = Array();
-	for (var i in rId.tripInfo) {
-		var tripList = rId.tripInfo[i].d;
+	let generateTable = function(i, dryRun, singleId) {
+		dryRun = dryRun ? true : false;
+		var o = {};
+		if (singleId) o[singleId] = rId.tripInfo[i].d[singleId];
+		var tripList = singleId ? o : rId.tripInfo[i].d;
 		var stopList = rId.tripInfo[i].s;
-		for (var tripId in tripList) {
+		for (let tripId in tripList) {
 			/* Individual trips */
-			var tripTable = document.createElement('table');
-			var headingTr = document.createElement('tr');
-			var headingTd = document.createElement('td');
-			var earliestTime = 32766;
-			var latestTime = -32768;
-			tripTable.setAttribute('border', 1);
-			headingTd.setAttribute('colspan', 2);
-			headingTd.style.fontWeight = 'bold';
-			var headingLink = document.createElement('a');
-			headingLink.addEventListener('click', function (e) {
-				isolateTrip = this.getAttribute("_x_tripid");
-				window.location.hash = 'singleTrip';
-				routeTimer();
-			}, false);
-			headingLink.setAttribute('href', 'javascript:void(0);');
-			headingLink.setAttribute("_x_tripid", tripId);
-			headingLink.innerText = rId.tripInfo[i].h;
-			headingTd.insertBefore(headingLink, null);
-			if (agency_specific_operations !== null && 
-					agency_specific_operations.get_direction_string != undefined) {
-				var dirString = String(agency_specific_operations.get_direction_string(rId, rId.tripInfo[i].x));
-				if (dirString.length !== 0) {
-					var dirText = document.createElement('span');
-					dirText.innerText = ' (' + dirString + ')';
-					headingTd.insertBefore(dirText, null);
-				}
-			}
-			tripTable.setAttribute('_x_tripid', tripId);
-			tripTable.setAttribute('class', 'trip-table');
-			headingTr.insertBefore(headingTd, null);
-			tripTable.insertBefore(headingTr, null);
-			for (var stopN in stopList) {
-				/* Individual stops in each trip */
-				var stopTr = document.createElement('tr');
-				var stopNameTd = document.createElement('td');
-				var stopTimeTd = document.createElement('td');
-				var stopId = stopList[stopN].n;
-				var delta = Number(tripList[tripId].d);
-				var arrivalTime = Number(stopList[stopN].a) + delta;
-				var departureTime = Number(stopList[stopN].d) + delta;
-				if (Number.isNaN(departureTime)) departureTime = arrivalTime;
-				var stopInfo = safeMapAccess(stopData, stopId);
-				/* print stop name */
-				if (stopInfo !== null) {
-					stopNameTd.setAttribute('_x_stop_name', stopId);
-					var stopNumber = Number(stopInfo.number);
-					if (Number.isSafeInteger(stopNumber)) {
-						var aElem = document.createElement('a');
-						aElem.setAttribute('href', `#stop-${stopNumber}`);
-						aElem.innerText = stopInfo.n;
-						aElem.setAttribute('class', 'stop-name');
-						stopNameTd.insertBefore(aElem, null);
-					} else {
-						stopNameTd.innerText = stopInfo.n;
+			let tripTable = dryRun ? null : document.createElement('table');
+			let headingTr = dryRun ? null : document.createElement('tr');
+			let headingTd = dryRun ? null : document.createElement('td');
+			let earliestTime = 32766;
+			let latestTime = -32768;
+			if (!dryRun) {
+				tripTable.setAttribute('border', 1);
+				headingTd.setAttribute('colspan', 2);
+				headingTd.style.fontWeight = 'bold';
+				let headingLink = document.createElement('a');
+				headingLink.addEventListener('click', function (e) {
+					isolateTrip = this.getAttribute("_x_tripid");
+					routeTimer(true);
+				}, false);
+				headingLink.setAttribute('href', 'javascript:void(0);');
+				headingLink.setAttribute("_x_tripid", tripId);
+				let headingText = rId.tripInfo[i].h;
+				if (!headingText || headingText == "") headingText = tripId;
+				headingLink.innerText = headingText;
+				headingTd.insertBefore(headingLink, null);
+				if (agency_specific_operations !== null && 
+						agency_specific_operations.get_direction_string != undefined) {
+					var dirString = String(agency_specific_operations.get_direction_string(rId, rId.tripInfo[i].x));
+					if (dirString.length !== 0) {
+						var dirText = document.createElement('span');
+						dirText.innerText = ' (' + dirString + ')';
+						headingTd.insertBefore(dirText, null);
 					}
-					stopNameTd.setAttribute('title', stopInfo.c);
 				}
-				/* If already passed, shade in blue */
-				if (currentTime > arrivalTime) {
-					stopTimeTd.style.backgroundColor = '#ccccff';
-				}
-				/* If selected, bold it */
-				if (stopInfo.number === showStopOnTrip) {
-					stopNameTd.style.fontWeight = 'bold';
+				tripTable.setAttribute('_x_tripid', tripId);
+				tripTable.setAttribute('class', 'trip-table');
+				headingTr.insertBefore(headingTd, null);
+				tripTable.insertBefore(headingTr, null);
+			}
+			let x = true;
+			for (let stopN in stopList) {
+				/* Individual stops in each trip */
+				let stopTr = dryRun ? null : document.createElement('tr');
+				let stopNameTd = dryRun ? null : document.createElement('td');
+				let stopTimeTd = dryRun ? null : document.createElement('td');
+				let stopId = stopList[stopN][0];
+				let delta = Number(tripList[tripId].d);
+				let arrivalTime = Number(stopList[stopN][1]) + delta;
+				let departureTime = Number(stopList[stopN][2]) + delta;
+				if (Number.isNaN(departureTime)) departureTime = arrivalTime;
+				let stopInfo = safeMapAccess(stopData, stopId);
+				if (!dryRun) {
+					/* print stop name */
+					if (stopInfo !== null) {
+						stopNameTd.setAttribute('_x_stop_name', stopId);
+						var stopNumber = Number(stopInfo.number);
+						if (Number.isSafeInteger(stopNumber)) {
+							var aElem = document.createElement('a');
+							aElem.setAttribute('href', `#stop-${stopNumber}`);
+							aElem.innerText = stopInfo.n;
+							aElem.setAttribute('class', 'stop-name');
+							stopNameTd.insertBefore(aElem, null);
+						} else {
+							stopNameTd.innerText = stopInfo.n;
+						}
+						stopNameTd.setAttribute('title', stopInfo.c);
+					} else {
+						stopNameTd.innerText = "??? " + stopId;
+					}
+					/* If already passed, shade in blue */
+					if (currentTime > arrivalTime) {
+						stopTimeTd.style.backgroundColor = '#ccccff';
+					}
+					/* If selected, bold it */
+					if (stopInfo && stopInfo.number === showStopOnTrip) {
+						stopNameTd.style.fontWeight = 'bold';
+					}
+					stopNameTd.style.textAlign = 'left';
+					if (x = !x) {
+						stopNameTd.style.backgroundColor = '#ddd';
+					}
+					stopNameTd.setAttribute('_x_originalcolor', x ? '#ddd' : '#f8f8f8');
 				}
 				/* earliest/latest time (display only if within) */
 				var earliestTimeT = Math.min(earliestTime, arrivalTime);
 				var latestTimeT = Math.max(latestTime, departureTime);
-				if (!Number.isNaN(earliestTimeT)) earliestTime = earliestTimeT;
-				if (!Number.isNaN(latestTimeT)) latestTime = latestTimeT;
+				if (!Number.isNaN(earliestTimeT) && arrivalTime != 32767) earliestTime = earliestTimeT;
+				if (!Number.isNaN(latestTimeT) && departureTime != 32767) latestTime = latestTimeT;
 				/* print stop time */
-				stopTimeTd.innerText = String(getTimeNumber(arrivalTime)) +
-						(arrivalTime !== departureTime ? ' - ' + getTimeNumber(departureTime) : '');
-				stopTimeTd.setAttribute('class', 'trip-time');
-				stopTimeTd.setAttribute('_x_time', arrivalTime);
-				stopTr.insertBefore(stopNameTd, null);
-				stopTr.insertBefore(stopTimeTd, null);
-				tripTable.insertBefore(stopTr, null);
+				if (!dryRun) {
+					stopTimeTd.innerText = String(getTimeNumber(arrivalTime)) +
+							(arrivalTime !== departureTime ? ' - ' + getTimeNumber(departureTime) : '');
+					stopTimeTd.setAttribute('class', 'trip-time');
+					stopTimeTd.setAttribute('_x_time', arrivalTime);
+					stopTr.insertBefore(stopNameTd, null);
+					stopTr.insertBefore(stopTimeTd, null);
+					tripTable.insertBefore(stopTr, null);
+				}
 			}
-			tripTable.setAttribute("_x_trip_lowerbound", earliestTime - BORDER_DELTA);
-			tripTable.setAttribute("_x_trip_upperbound", latestTime + BORDER_DELTA);
-			var serviceTime = tripList[tripId].s;
-			tripTable.setAttribute("_x_trip_serviceid", serviceTime);
-			hasDisplayed = pruneOrUnpruneTrip(tripTable) || hasDisplayed;
-			allTripTables.push(tripTable);
+			if (!dryRun) {
+				tripTable.setAttribute("_x_trip_lowerbound", earliestTime - BORDER_DELTA);
+				tripTable.setAttribute("_x_trip_upperbound", latestTime + BORDER_DELTA);
+				var serviceTime = tripList[tripId].s;
+				tripTable.setAttribute("_x_trip_serviceid", serviceTime);
+				pruneOrUnpruneTrip(tripTable);
+				rId.trips[tripId].table = tripTable;
+			} else {
+				if (rId.trips[tripId] == undefined) {
+					rId.trips[tripId] = {
+						genTable: function() {generateTable(i, false, tripId)},
+						table: null,
+						lowerBound: earliestTime - BORDER_DELTA,
+						upperBound: latestTime + BORDER_DELTA,
+						serviceId: tripList[tripId].s,
+						id: tripId,
+					};
+				}
+			}
 		}
+	};
+	let nextF = () => {
+		if (rId.tripsByTime == undefined) {
+			rId.tripsByTime = [];
+			for (let i in rId.trips) {
+				rId.tripsByTime.push(i);
+			}
+			rId.tripsByTime.sort(_compareRouteName(a => rId.trips[a].lowerBound));
+		}
+		routeTimer(true);
+		if (agency_specific_operations && agency_specific_operations.display_location_on_tables)
+			agency_specific_operations.display_location_on_tables(fetchFile);
 	}
-	allTripTables.sort(_compareRouteName((a) => Number(a.getAttribute('_x_trip_lowerbound'))));
-	for (var i in allTripTables) {
-		tables.insertBefore(allTripTables[i], null);
+	let number_displayed = 0;
+	let numberDisplay = document.getElementById('trip-count');
+	for (let i in rId.tripInfo) {
+		setTimeout(() => {
+			generateTable(i, true, null);
+			if ((++number_displayed % 10 == 0) && numberDisplay)
+				numberDisplay.innerText = `Loading ${number_displayed} of ${rId.tripInfo.length} trips...`;
+			if (number_displayed == rId.tripInfo.length)
+				nextF();
+		}, 0);
 	}
-	if (agency_specific_operations.display_location_on_tables) {
-		agency_specific_operations.display_location_on_tables(fetchFile);
-	}
-	routeTimer();
 }
 load();
 }
