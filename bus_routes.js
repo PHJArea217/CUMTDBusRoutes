@@ -45,13 +45,13 @@ function _onhashchange_me(e) {
 var callbackQueue = {};
 function fetchFile(name, callback, errorHandler) {
 	name = String(name);
-	var cacheKey = name.startsWith("http") ? null : "br json cache " + name;
-	var xhr = new XMLHttpRequest();
+	let cacheKey = name.startsWith("http") ? null : "br json cache " + name;
+	let xhr = new XMLHttpRequest();
 	xhr.open("GET", name);
 	xhr.onreadystatechange = function () {
 		if (xhr.readyState === 4) {
 			if (xhr.status === 200) {
-				var rt = xhr.responseText;
+				let rt = xhr.responseText;
 				if (cacheKey !== null) sessionStorage.setItem(cacheKey, rt);
 				let json = JSON.parse(rt);
 				if (cacheKey in callbackQueue) {
@@ -70,7 +70,7 @@ function fetchFile(name, callback, errorHandler) {
 		}
 	};
 	if (cacheKey !== null) {
-		var r = sessionStorage.getItem(cacheKey);
+		let r = sessionStorage.getItem(cacheKey);
 		if (r != undefined && r !== null) {
 			callback(null, JSON.parse(r));
 			return;
